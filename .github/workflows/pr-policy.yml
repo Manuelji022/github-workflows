@@ -1,0 +1,171 @@
+name: PR Policy
+
+on:
+  workflow_call:
+    inputs:
+      large-loc-threshold:
+        description: Source LOC above this value is LARGE.
+        type: number
+        default: 400
+      oversized-loc-threshold:
+        description: Source LOC above this value requires justification.
+        type: number
+        default: 800
+      large-files-threshold:
+        description: Source files above this value is LARGE.
+        type: number
+        default: 10
+
+permissions:
+  pull-requests: read
+
+jobs:
+  policy:
+    name: PR policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # No checkout: only structured metadata is read; no PR code is executed.
+      - name: Validate title, body, and review size
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LARGE_LOC: ${{ inputs.large-loc-threshold }}
+          OVERSIZED_LOC: ${{ inputs.oversized-loc-threshold }}
+          LARGE_FILES: ${{ inputs.large-files-threshold }}
+        shell: python
+        run: |
+          import html
+          import json
+          import math
+          import os
+          import re
+          import urllib.request
+          from pathlib import Path, PurePosixPath
+
+          def annotation(level, message):
+              safe = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::{level}::{safe}')
+
+          def threshold(name):
+              value = float(os.environ[name])
+              if not math.isfinite(value) or value < 0 or not value.is_integer():
+                  raise ValueError(f'{name} must be a non-negative integer.')
+              return int(value)
+
+          def api(path):
+              request = urllib.request.Request(
+                  f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/{path}",
+                  headers={'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                           'Accept': 'application/vnd.github+json',
+                           'X-GitHub-Api-Version': '2022-11-28'},
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          def sections(body):
+              # ATX headings; ignore HTML comments and heading examples in fences.
+              body = re.sub(r'<!--.*?(?:-->|\Z)', '', body, flags=re.S)
+              result, current, fence = {}, None, None
+              for line in body.splitlines():
+                  marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+                  if marker:
+                      run, rest = marker.groups()
+                      if fence is None:
+                          fence = run
+                      elif run[0] == fence[0] and len(run) >= len(fence) and not rest.strip():
+                          fence = None
+                      if current:
+                          result[current].append(line)
+                      continue
+                  heading = None if fence else re.match(r'^ {0,3}#{1,6}\s+(.+?)\s*$', line)
+                  if heading:
+                      title = re.sub(r'\s+#+\s*$', '', heading[1])
+                      current = ' '.join(title.casefold().split())
+                      result.setdefault(current, [])
+                  elif current:
+                      result[current].append(line)
+              return result
+
+          def meaningful(lines, allow_none=False):
+              for line in lines:
+                  if re.match(r'^ {0,3}(`{3,}|~{3,})', line):
+                      continue
+                  plain = re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\[[ xX]\]\s*)?', '', line)
+                  plain = plain.strip(' \t\r\n*_`~>#.:!-')
+                  normalized = ' '.join(plain.casefold().split())
+                  placeholders = {'todo', 'tbd', 'n/a', 'na', 'not applicable', 'none'}
+                  if allow_none:
+                      placeholders -= {'none', 'n/a', 'na', 'not applicable'}
+                  if normalized and normalized not in placeholders and any(c.isalnum() for c in normalized):
+                      return True
+              return False
+
+          def validate():
+              large, oversized, file_limit = map(threshold, ('LARGE_LOC', 'OVERSIZED_LOC', 'LARGE_FILES'))
+              if oversized <= large:
+                  raise ValueError('oversized-loc-threshold must exceed large-loc-threshold.')
+              event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+              if os.environ['GITHUB_EVENT_NAME'] != 'pull_request' or not event.get('pull_request'):
+                  raise ValueError('Call PR Policy from a pull_request workflow.')
+              number = int(event['number'])
+              before = api(f'pulls/{number}')
+              if before['head']['sha'] != event['pull_request']['head']['sha']:
+                  raise ValueError('PR head changed during this run; use the run for the latest commit.')
+              files = []
+              for page in range(1, 31):
+                  batch = api(f'pulls/{number}/files?per_page=100&page={page}')
+                  files.extend(batch)
+                  if len(batch) < 100:
+                      break
+              after = api(f'pulls/{number}')
+              if any(before[key] != after[key] for key in ('head', 'base', 'title', 'body', 'changed_files')):
+                  raise ValueError('PR changed during validation; rerun the policy check.')
+              if len(files) != before['changed_files'] or len({f['filename'] for f in files}) != len(files):
+                  raise ValueError('GitHub returned an incomplete file list (API limit: 3,000 files). Split the PR.')
+              excluded = {'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'uv.lock'}
+              # Renaming source to a lockfile must not hide the source change.
+              def is_lockfile(file):
+                  return (PurePosixPath(file['filename']).name in excluded
+                          and PurePosixPath(file.get('previous_filename', file['filename'])).name in excluded)
+              source = [file for file in files if not is_lockfile(file)]
+              loc = sum(file['additions'] + file['deletions'] for file in source)
+              excluded_loc = sum(file['additions'] + file['deletions'] for file in files if is_lockfile(file))
+              category = 'OVERSIZED' if loc > oversized else 'LARGE' if loc > large or len(source) > file_limit else 'NORMAL'
+              errors = []
+              title_pattern = r'(feat|fix|refactor|test|docs|build|ci|chore|perf)(\([^()\r\n]+\))?!?: \S[^\r\n]*'
+              if not re.fullmatch(title_pattern, before['title']):
+                  errors.append('Invalid PR title. Expected type(scope): description; scope and ! are optional. Types: feat, fix, refactor, test, docs, build, ci, chore, perf.')
+              body = sections(before.get('body') or '')
+              required = ['Summary', 'Why', 'Scope', 'Out of scope', 'How to test', 'Risk']
+              for section in required:
+                  key = section.casefold()
+                  if key not in body:
+                      errors.append(f'Missing required PR section: {section}.')
+                  elif not meaningful(body[key], key in {'out of scope', 'risk'}):
+                      errors.append(f'Empty or placeholder PR section: {section}.')
+              if category == 'OVERSIZED' and not meaningful(body.get('large pr justification', [])):
+                  errors.append('Add a non-empty "Large PR justification" section to the PR description, or split the change into smaller PRs.')
+              summary = [f"## PR policy {'failed' if errors else 'passed'}", '',
+                         f'Classification: **{category}**', '',
+                         f'Changed source LOC: {loc:,} (additions + deletions)',
+                         f'Changed source files: {len(source):,}',
+                         f'Excluded lockfiles: {len(files) - len(source):,} ({excluded_loc:,} LOC)',
+                         f'Large thresholds: >{large:,} LOC or >{file_limit:,} files',
+                         f'Oversized threshold: >{oversized:,} LOC', '']
+              summary.extend(f'- {html.escape(error)}' for error in errors)
+              Path(os.environ['GITHUB_STEP_SUMMARY']).write_text('\n\n'.join(summary) + '\n')
+              if category != 'NORMAL':
+                  annotation('warning', f'{category} PR: {loc:,} source LOC in {len(source):,} files. Oversized threshold: {oversized:,} LOC.')
+              for error in errors:
+                  annotation('error', error)
+              return bool(errors)
+
+          try:
+              failed = validate()
+          except Exception as error:
+              # Never print request headers, PR text, or other untrusted metadata.
+              message = str(error) if isinstance(error, ValueError) else f'Metadata validation could not complete ({type(error).__name__}). Rerun and check API access.'
+              annotation('error', message)
+              Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(f'## PR policy failed\n\n{html.escape(message)}\n')
+              failed = True
+          raise SystemExit(1 if failed else 0)
