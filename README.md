@@ -12,7 +12,7 @@ This repository owns implementation. Consumers own triggers, dependencies, scrip
 
 ### Python CI
 
-`python-ci.yml` runs independent Ruff, ty, and pytest jobs. uv 0.12.12 installs the requested managed Python, then runs `uv sync --frozen --group dev`. Checks use `uv run --no-sync ruff check .`, `uv run --no-sync ty check`, and `uv run --no-sync pytest` so execution cannot update the lockfile or resynchronize the environment. Each enabled tool must exist in `.venv/bin`.
+`python-ci.yml` runs independent Ruff, ty, and pytest jobs. uv 0.12.12 installs the requested managed Python, then runs `uv sync --locked --group dev`. Checks use `uv run --no-sync ruff check .`, `uv run --no-sync ty check`, and `uv run --no-sync pytest` so execution cannot update the lockfile or resynchronize the environment. Each enabled tool must exist in `.venv/bin`.
 
 ### PR Policy
 
@@ -150,13 +150,13 @@ Local equivalents:
 
 ```bash
 uv python install 3.13
-uv sync --frozen --group dev
+uv sync --locked --group dev
 uv run --no-sync ruff check .
 uv run --no-sync ty check
 uv run --no-sync pytest
 ```
 
-`--frozen` uses the committed lock without updating it; it does not validate that the lock is up to date with project metadata. Maintain the lock locally. The explicit dev group prevents custom default groups from omitting CI tools. uv caches downloads through setup-uv; virtual environments are not shared across jobs. See [Astral's CI guide](https://docs.astral.sh/uv/guides/integration/github/), [sync semantics](https://docs.astral.sh/uv/concepts/projects/sync/), and [ty CLI](https://docs.astral.sh/ty/reference/cli/).
+`--locked` validates that the committed lock is up to date with project metadata and fails if it would need updating. Update and commit the lock locally when changing project metadata. The explicit dev group prevents custom default groups from omitting CI tools. uv caches downloads through setup-uv; virtual environments are not shared across jobs. See [Astral's CI guide](https://docs.astral.sh/uv/guides/integration/github/), [sync semantics](https://docs.astral.sh/uv/concepts/projects/sync/), and [ty CLI](https://docs.astral.sh/ty/reference/cli/).
 
 ## Security
 

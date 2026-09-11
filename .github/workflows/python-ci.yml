@@ -49,7 +49,7 @@ jobs:
       - name: Synchronize locked project and dev dependencies
         run: |
           test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
-          uv sync --frozen --group dev
+          uv sync --locked --group dev
       - name: Run Ruff
         run: |
           test -x .venv/bin/ruff || { echo "::error::Declare ruff in the project's dev dependency group."; exit 1; }
@@ -76,7 +76,7 @@ jobs:
       - name: Synchronize locked project and dev dependencies
         run: |
           test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
-          uv sync --frozen --group dev
+          uv sync --locked --group dev
       - name: Run ty
         run: |
           test -x .venv/bin/ty || { echo "::error::Declare ty in the project's dev dependency group."; exit 1; }
@@ -103,7 +103,7 @@ jobs:
       - name: Synchronize locked project and dev dependencies
         run: |
           test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
-          uv sync --frozen --group dev
+          uv sync --locked --group dev
       - name: Run pytest
         run: |
           test -x .venv/bin/pytest || { echo "::error::Declare pytest in the project's dev dependency group."; exit 1; }
