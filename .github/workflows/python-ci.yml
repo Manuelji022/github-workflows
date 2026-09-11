@@ -1,0 +1,110 @@
+name: Python CI
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Python version managed by uv.
+        type: string
+        default: "3.13"
+      run-lint:
+        description: Run Ruff.
+        type: boolean
+        default: true
+      run-typecheck:
+        description: Run ty.
+        type: boolean
+        default: true
+      run-tests:
+        description: Run pytest.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: ${{ inputs.python-version }}
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  lint:
+    name: Ruff
+    if: ${{ inputs.run-lint }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Synchronize locked project and dev dependencies
+        run: |
+          test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
+          uv sync --locked --group dev
+      - name: Run Ruff
+        run: |
+          test -x .venv/bin/ruff || { echo "::error::Declare ruff in the project's dev dependency group."; exit 1; }
+          uv run --no-sync ruff check .
+
+  typecheck:
+    name: ty
+    if: ${{ inputs.run-typecheck }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Synchronize locked project and dev dependencies
+        run: |
+          test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
+          uv sync --locked --group dev
+      - name: Run ty
+        run: |
+          test -x .venv/bin/ty || { echo "::error::Declare ty in the project's dev dependency group."; exit 1; }
+          uv run --no-sync ty check
+
+  test:
+    name: pytest
+    if: ${{ inputs.run-tests }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+      - name: Synchronize locked project and dev dependencies
+        run: |
+          test -f pyproject.toml && test -f uv.lock || { echo "::error::Commit pyproject.toml and uv.lock."; exit 1; }
+          uv sync --locked --group dev
+      - name: Run pytest
+        run: |
+          test -x .venv/bin/pytest || { echo "::error::Declare pytest in the project's dev dependency group."; exit 1; }
+          uv run --no-sync pytest
