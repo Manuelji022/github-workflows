@@ -34,7 +34,7 @@ The policy checks presence, not explanation quality or semantic correctness. It 
 
 ## Usage
 
-**The `v1` tag does not exist yet.** Examples show the intended compatibility line; publish that tag before using them, or substitute a reviewed immutable commit SHA. Enable access to this reusable repository in GitHub Actions settings if it is private.
+**The `v1` tag does not exist yet.** Follow the [release procedure](RELEASE.md) to publish the first compatibility tag after the implementation is reviewed, or substitute a reviewed immutable commit SHA until then. Enable access to this reusable repository in GitHub Actions settings if it is private.
 
 ### Node caller
 
